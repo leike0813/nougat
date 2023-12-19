@@ -34,7 +34,8 @@ if NOUGAT_CHECKPOINT is None:
     sys.exit(1)
 
 app = FastAPI(title="Nougat API")
-origins = ["http://localhost", "http://127.0.0.1"]
+# origins = ["http://localhost", "http://127.0.0.1"]
+origins = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -71,7 +72,8 @@ def root():
 
 @app.post("/predict/")
 async def predict(
-    file: UploadFile = File(...), start: int = None, stop: int = None
+    file: UploadFile = File(...), start: int = None, stop: int = None, recompute: int = None,
+    no_skipping: int = None, no_markdown: int = None, batchsize: int = BATCHSIZE
 ) -> str:
     """
     Perform predictions on a PDF document and return the extracted text in Markdown format.
@@ -80,6 +82,10 @@ async def predict(
         file (UploadFile): The uploaded PDF file to process.
         start (int, optional): The starting page number for prediction.
         stop (int, optional): The ending page number for prediction.
+        recompute(int, optional): If true, recompute already computed PDF, discarding previous predictions.
+        no_skipping(int, optional): If true, the failure detection heuristic will not be applied.
+        no_markdown(int, optional): If true, the postprocessing step for markdown compatibility will not be applied.
+        batchsize(int, optional): Batch size used for prediction.
 
     Returns:
         str: The extracted text in Markdown format.
@@ -95,7 +101,7 @@ async def predict(
         pages = list(range(len(pdf)))
     predictions = [""] * len(pages)
     dellist = []
-    if save_path.exists():
+    if save_path.exists() and not recompute:
         for computed in (save_path / "pages").glob("*.mmd"):
             try:
                 idx = int(computed.stem) - 1
@@ -119,7 +125,7 @@ async def predict(
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        batch_size=BATCHSIZE,
+        batch_size=batchsize,
         pin_memory=True,
         shuffle=False,
     )
@@ -127,7 +133,7 @@ async def predict(
     for idx, sample in tqdm(enumerate(dataloader), total=len(dataloader)):
         if sample is None:
             continue
-        model_output = model.inference(image_tensors=sample)
+        model_output = model.inference(image_tensors=sample, early_stopping=not no_skipping)
         for j, output in enumerate(model_output["predictions"]):
             if model_output["repeats"][j] is not None:
                 if model_output["repeats"][j] > 0:
@@ -144,8 +150,8 @@ async def predict(
             else:
                 disclaimer = ""
 
-            predictions[pages.index(compute_pages[idx * BATCHSIZE + j])] = (
-                markdown_compatible(output) + disclaimer
+            predictions[pages.index(compute_pages[idx * batchsize + j])] = (
+                (markdown_compatible(output) if not no_markdown else output) + disclaimer
             )
 
     (save_path / "pages").mkdir(parents=True, exist_ok=True)
@@ -160,13 +166,15 @@ async def predict(
         )
     final = "".join(predictions).strip()
     (save_path / "doc.mmd").write_text(final, encoding="utf-8")
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     return final
 
 
 def main():
     import uvicorn
 
-    uvicorn.run("app:app", port=8503)
+    uvicorn.run("app:app", host='0.0.0.0', port=8503)
 
 
 if __name__ == "__main__":

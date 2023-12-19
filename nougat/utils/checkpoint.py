@@ -13,7 +13,7 @@ from pathlib import Path
 import torch
 
 BASE_URL = "https://github.com/facebookresearch/nougat/releases/download"
-MODEL_TAG = "0.1.0-small"
+MODEL_TAG = "0.1.0-base"
 
 
 # source: https://stackoverflow.com/a/71459251
