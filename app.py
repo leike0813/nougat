@@ -117,6 +117,8 @@ async def predict(
         compute_pages.remove(el)
     images = rasterize_paper(pdf, pages=compute_pages)
     global model
+    if model.device.type == 'cpu':
+        model = move_to_device(model, cuda=BATCHSIZE > 0)
 
     dataset = ImageDataset(
         images,
@@ -169,6 +171,20 @@ async def predict(
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     return final
+
+
+@app.get('/release/')
+async def release_model():
+    global model
+    if model.device.type != 'cpu':
+        model = model.to("cpu")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    response = {
+        "status-code": HTTPStatus.OK,
+        "data": {},
+    }
+    return response
 
 
 def main():
